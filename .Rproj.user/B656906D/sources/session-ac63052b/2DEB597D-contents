@@ -1,0 +1,253 @@
+# 1. Import the libraries
+library(tidyverse)
+library(dplyr)
+library(gridExtra)
+library(psych)
+library(reshape2)
+library(rpart)
+library(rpart.plot)
+library(ROSE)
+library(randomForest)
+library(caret)
+library(recipes)
+library(purrr)
+library(stringr)
+
+# 2. Import the dataset
+df = read.csv("Online retail store shoppers intention.csv")
+head(df)
+
+
+# 3. Summary Statistics
+summary(df)
+describe(df)
+glimpse(df)
+str(df)
+
+
+# 4. Check for Missing values
+missing_values <- colSums(is.na(df))
+missing_values
+# We can see there are no missing values in the dataset
+
+
+# visualize the distribution of the dependent variable (Revenue)
+attach(df)
+revenue_table <- table(Revenue)
+#revenue_table <- ifelse(Revenue, 'Buyer', 'Non-Buyer')
+barplot(revenue_table, col = 'skyblue', main = 'Distribution of Revenue', xlab = 'Revenue', ylab = 'Frequency')
+
+# Visualize the distribution of numerical variables
+hist(df$BounceRates, main="Histogram of Bounce Rates", xlab="Bounce Rates")
+hist(df$ExitRates, main="Histogram of Exit Rates", xlab="Exit Rates")
+
+
+# 5. EDA
+# (a) Page interaction analysis
+# Aggregate the data using mean
+page_cnt_df <- df %>%
+  group_by(Revenue) %>%
+  summarize(
+    Administrative = mean(Administrative),
+    Informational = mean(Informational),
+    ProductRelated = mean(ProductRelated)
+  ) %>%
+  ungroup()
+# Change values of Revenue column to be more readable
+page_cnt_df$Revenue <- ifelse(page_cnt_df$Revenue, 'Buyers', 'Non-Buyers')
+# Create a bar plot
+# Reshape data for better plotting
+page_cnt_df_long <- tidyr::gather(page_cnt_df, key = "PageType", value = "AvgPageCount", -Revenue)
+# Create a grouped bar plot
+ggplot(page_cnt_df_long, aes(x = PageType, y = AvgPageCount, fill = Revenue)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  geom_text(aes(label = round(AvgPageCount, 2)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = "black") +
+  labs(title = 'Average Page Counts by Page Type and Revenue',
+       x = 'Page Type',
+       y = 'Average Page Count') +
+  theme_minimal()
+
+
+# (b) Page Duration analysis
+# Aggregate the data using mean
+page_duration_df <- df %>%
+  group_by(Revenue) %>%
+  summarize(
+    Administrative_Duration = mean(Administrative_Duration),
+    Informational_Duration = mean(Informational_Duration),
+    ProductRelated_Duration = mean(ProductRelated_Duration)
+  ) %>%
+  ungroup()
+# Change values of Revenue column to be more readable
+page_duration_df$Revenue <- ifelse(page_duration_df$Revenue, 'Buyers', 'Non-Buyers')
+# Create a bar plot
+# Reshape data for better plotting
+page_cnt_df_long <- tidyr::gather(page_duration_df, key = "PageDuration", value = "AvgPageDuration", -Revenue)
+# Create a grouped bar plot
+ggplot(page_cnt_df_long, aes(x = PageDuration, y = AvgPageDuration, fill = Revenue)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  geom_text(aes(label = round(AvgPageDuration, 2)), 
+            position = position_dodge(width = 0.9), 
+            vjust = -0.5, 
+            color = "black") +
+  labs(title = 'Average Page Duration by Page Type and Revenue',
+       x = 'Page Duration',
+       y = 'Average Page Duration') +
+  theme_minimal()
+
+
+
+# (C) Time duration visitors spend on each page type
+# Build df for duration count
+page_dur_cnt <- df %>%
+  group_by(Revenue) %>%
+  summarise(
+    Administrative_Duration = mean(Administrative_Duration) / 60,
+    Informational_Duration = mean(Informational_Duration) / 60,
+    ProductRelated_Duration = mean(ProductRelated_Duration) / 60
+  ) %>%
+  ungroup()
+# Change values of Revenue column for readability
+page_dur_cnt$Revenue <- ifelse(page_dur_cnt$Revenue == TRUE, 'Buyers', 'Non-Buyers')
+# Print the resulting dataframe
+print(page_dur_cnt)
+# Create a bar plot
+# Reshape the data for better plotting
+page_dur_cnt_long <- reshape2::melt(page_dur_cnt, id.vars = "Revenue")
+# Create a bar plot
+ggplot(page_dur_cnt_long, aes(x = Revenue, y = value, fill = variable)) +
+  geom_bar(position = "dodge", stat = "identity", width = 0.7) +
+  labs(title = "Average Page Durations by Revenue",
+       x = "Revenue",
+       y = "Average Duration (minutes)",
+       fill = "Page Type") +
+  theme_minimal()
+
+
+# (d) Analysis of Visitor Type Numbers
+# Aggregate the data
+visitor_df <- df %>%
+  group_by(VisitorType, Revenue) %>%
+  summarise(cnt = n()) %>%
+  arrange(desc(cnt))
+# Change values in the 'Revenue' column
+visitor_df$Revenue <- ifelse(visitor_df$Revenue == TRUE, 'Buyers', 'Non-Buyers')
+# Plot
+ggplot(visitor_df, aes(x = VisitorType, y = cnt, fill = Revenue)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  geom_text(aes(label = cnt), position = position_dodge(width = 0.9), vjust = -0.5) +  # Add labels on top
+  scale_fill_manual(values = c('#92c6ff', '#97f0aa'), name = 'Buy types') +
+  labs(y = 'Session count', title = 'Plot of session count for each Visitor type') +
+  theme_minimal()
+
+
+# (e) user interaction with webpages
+# Create a copy of the data frame
+df_bounce_exit <- df
+# Map True to 'Buyers' and False to 'Non-Buyers' in the 'Revenue' column
+df_bounce_exit$Revenue <- ifelse(df_bounce_exit$Revenue, 'Buyers', 'Non-Buyers')
+# Define custom colors
+custom_colors <- c('Buyers' = '#92c6ff', 'Non-Buyers' = '#ff8c8c')  # Green for 'Buyers', Red for 'Non-Buyers'
+# Create scatterplot with custom colors
+ggplot(df_bounce_exit, aes(x = ExitRates, y = BounceRates, color = Revenue)) +
+  geom_point() +
+  geom_smooth(method = 'lm', se = FALSE, color = 'black') +  # Add regression line
+  scale_color_manual(values = custom_colors, name = 'Buyer type') +
+  labs(x = 'Exit rate', y = 'Bounce rate') +
+  theme_minimal()
+
+
+# (f) 
+# Create boxplot with custom colors
+ggplot(df_bounce_exit, aes(x = Revenue, y = PageValues, fill = Revenue)) +
+  geom_boxplot() +
+  scale_fill_manual(values = custom_colors, name = 'Buyer type') +
+  labs(title='Box Plot Showing Page Values', x = 'Revenue', y = 'PageValues') +
+  theme_minimal()
+
+# (g) Month-wise Analysis
+df %>%
+  group_by(Month, Revenue) %>%
+  summarise(average_revenue = mean(Revenue))
+# No need to mutate Revenue here, as it's already a factor
+# Create a grouped bar plot
+ggplot(df, aes(x = Month, y = Revenue, fill = Revenue)) +
+  geom_bar(stat = "summary", fun = sum) +
+  scale_color_manual(values = custom_colors, name = 'Buyer type') +
+  theme_minimal() +
+  labs(x = "Month", y = "Revenue", title = "Monthly Revenue")
+
+
+# (h) Browser and Operating System Analysis For Buyers
+## 1) Visits by Buyers Browser
+df %>%
+  group_by(Browser) %>%
+  summarise(total_revenue = sum(Revenue)) %>%
+  ggplot(aes(x = reorder(Browser, -total_revenue), y = total_revenue, fill = total_revenue)) +
+  geom_bar(stat = 'identity') +
+  geom_text(aes(label = total_revenue), position = position_stack(vjust = 0.5), size = 3, color = 'black', vjust = -0.5) +
+  theme_minimal() +
+  labs(x = "Browser", y = "Visits", title = "Visits by Buyers Browser")
+
+## 2) Visits by Buyers Operating System
+df %>%
+  group_by(OperatingSystems) %>%
+  summarise(total_revenue = sum(Revenue)) %>%
+  ggplot(aes(x = reorder(as.factor(OperatingSystems), -total_revenue), y = total_revenue, fill = total_revenue)) +
+  geom_bar(stat = 'identity') +
+  geom_text(aes(label = total_revenue), position = position_stack(vjust = 0.5), size = 3, color = 'black', vjust = -0.5) +
+  theme_minimal() +
+  labs(x = "Operating System", y = "Revenue Count", title = "Visits by Buyers Operating System")
+
+
+##########################################################
+##########################################################
+# MACHINE LEARNING
+#########################################################
+
+# 1. DECISION TREE ALGORITHM
+# Binary Classification predicting whether a user makes a purchase:
+df$Revenue <- factor(df$Revenue, levels = c(TRUE, FALSE), labels = c('Buyer', 'Non-Buyer'))
+decision_tree_model <- rpart(Revenue ~ ., data = df, method='class')
+# Visualize the decision tree with adjusted margins
+par(mar=c(1,1,1,1)) #adjust the margins
+rpart.plot(decision_tree_model, main='Decision Tree for Buyers and Non-buyers', box.palette = 'RdBu')
+
+
+
+##########################################################
+# 2. RANDOM FOREST ALGORITHM
+#######################################################################
+# Define a function to highlight metrics
+highlight_metrics <- function(colors_for_metrics) {
+  style <- lapply(colors_for_metrics, function(color) {
+    return(paste('background-color: ', color, ';', sep = ''))
+  })
+  return(style)
+}
+# Remove rows with missing values
+df <- na.omit(df)
+# Convert 'Revenue' to a factor for classification
+df$Revenue <- as.factor(df$Revenue)
+
+# Set seed for reproducibility
+set.seed(1997)
+# Create a train-test split
+train_indices <- createDataPartition(df$Revenue, p = 0.8, list = FALSE)
+train_data <- df[train_indices, ]
+test_data <- df[-train_indices, ]
+# Train the Random Forest classifier
+rf_model <- randomForest(Revenue ~ ., data = train_data, ntree = 100, importance = TRUE)
+# Make predictions on the test set
+predictions <- predict(rf_model, newdata = test_data)
+# Evaluate the model (you can use different metrics based on your needs)
+conf_matrix <- table(predictions, test_data$Revenue)
+accuracy <- sum(diag(conf_matrix)) / sum(conf_matrix)
+print(paste("Accuracy:", accuracy))
+# Display variable importance
+var_importance <- importance(rf_model)
+print("Variable Importance:")
+print(var_importance)
